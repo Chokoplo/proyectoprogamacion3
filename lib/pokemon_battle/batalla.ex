@@ -381,6 +381,8 @@ end
   defp terminar_batalla(state, ganador, perdedor) do
     turno_final = state.turno
     nodo = state.nodo
+    jugadores_str = state.jugadores |> Map.values() |> Enum.map(& &1.usuario) |> Enum.join(" vs ")
+
     broadcast(state, """
 
     ═══════════════════════════════════
@@ -392,9 +394,15 @@ end
     ═══════════════════════════════════
     """)
 
-    Persistencia.registrar_batalla(
-      "ganador=#{ganador} perdedor=#{perdedor} turnos=#{turno_final} nodo=#{nodo}"
-    )
+    Persistencia.registrar_batalla(%{
+      fecha: DateTime.utc_now() |> DateTime.to_string(),
+      sala: state.id_sala,
+      jugadores: jugadores_str,
+      ganador: ganador,
+      perdedor: perdedor,
+      turnos: turno_final,
+      nodo: to_string(nodo)
+    })
 
     # Notificar al gestor de entrenadores para actualizar monedas y victorias
     PokemonBattle.GestorSalas.batalla_terminada(state.id_sala, ganador, perdedor)
