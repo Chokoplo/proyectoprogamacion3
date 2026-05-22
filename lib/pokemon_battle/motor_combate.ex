@@ -74,8 +74,8 @@ defmodule PokemonBattle.MotorCombate do
 
   @doc "Devuelve {:primero, :segundo} según velocidad; desempate aleatorio."
   def orden_ataque(pk1, pk2) do
-    v1 = pk1["velocidad"]
-    v2 = pk2["velocidad"]
+    v1 = Map.get(pk1, :velocidad) || Map.get(pk1, "velocidad")
+    v2 = Map.get(pk2, :velocidad) || Map.get(pk2, "velocidad")
     cond do
       v1 > v2 -> {:primero, :segundo}
       v2 > v1 -> {:segundo, :primero}
