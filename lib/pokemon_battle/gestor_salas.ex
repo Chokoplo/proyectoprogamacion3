@@ -104,18 +104,43 @@ defmodule PokemonBattle.GestorSalas do
           {:reply, {:error, "Ambos jugadores deben cargar un equipo con 'usar_equipo'"}, state}
         else
           nodo_batalla = elegir_nodo()
-          {:ok, _pid} = SupervisorBatallas.iniciar_batalla(id_sala)
 
-          Enum.each(sala.jugadores, fn j ->
-            equipo = sala.equipo_cargado[j.pid]
-            PokemonBattle.Batalla.unirse(id_sala, j.pid, j.usuario, equipo)
-          end)
+          # Iniciar la batalla en el nodo elegido (distribuido si hay otros nodos)
+          resultado =
+            if nodo_batalla == node() do
+              SupervisorBatallas.iniciar_batalla(id_sala)
+            else
+              :rpc.call(nodo_batalla, PokemonBattle.SupervisorBatallas, :iniciar_batalla, [id_sala])
+            end
 
-          PokemonBattle.Batalla.iniciar(id_sala)
-          sala = %{sala | estado: :en_curso}
-          salas = Map.put(state.salas, id_sala, sala)
+          case resultado do
+            {:ok, _pid} ->
+              Enum.each(sala.jugadores, fn j ->
+                equipo = sala.equipo_cargado[j.pid]
+                PokemonBattle.Batalla.unirse(id_sala, j.pid, j.usuario, equipo)
+              end)
 
-          {:reply, {:ok, nodo_batalla}, %{state | salas: salas}}
+              PokemonBattle.Batalla.iniciar(id_sala)
+              sala = %{sala | estado: :en_curso}
+              salas = Map.put(state.salas, id_sala, sala)
+              {:reply, {:ok, nodo_batalla}, %{state | salas: salas}}
+
+            {:error, reason} ->
+              {:reply, {:error, "No se pudo iniciar la batalla en nodo #{nodo_batalla}: #{inspect(reason)}"}, state}
+
+            {:badrpc, reason} ->
+              # Fallback: iniciar localmente si el nodo remoto falla
+              {:ok, _pid} = SupervisorBatallas.iniciar_batalla(id_sala)
+              Enum.each(sala.jugadores, fn j ->
+                equipo = sala.equipo_cargado[j.pid]
+                PokemonBattle.Batalla.unirse(id_sala, j.pid, j.usuario, equipo)
+              end)
+              PokemonBattle.Batalla.iniciar(id_sala)
+              sala = %{sala | estado: :en_curso}
+              salas = Map.put(state.salas, id_sala, sala)
+              IO.puts("[Aviso] No se pudo conectar al nodo #{nodo_batalla} (#{inspect(reason)}). Batalla iniciada localmente en #{node()}.")
+              {:reply, {:ok, node()}, %{state | salas: salas}}
+          end
         end
     end
   end
