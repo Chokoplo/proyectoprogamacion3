@@ -52,7 +52,7 @@ end
     linea =
       "#{info.fecha} | sala=#{info.sala} | jugadores=#{info.jugadores} | " <>
       "ganador=#{info.ganador} | perdedor=#{info.perdedor} | " <>
-      "turnos=#{info.turnos} | nodo=#{info.nodo}\n"
+      "turnos=#{info.turnos} | duracion=#{Map.get(info, :duracion, "N/A")}s | nodo=#{info.nodo}\n"
     File.write!(@battles_log, linea, [:append])
   end
 

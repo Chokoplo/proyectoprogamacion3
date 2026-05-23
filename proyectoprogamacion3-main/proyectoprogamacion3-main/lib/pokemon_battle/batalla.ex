@@ -15,7 +15,8 @@ defmodule PokemonBattle.Batalla do
       turno: 1,
       acciones: %{},        # %{pid => accion}
       estado: :esperando,   # :esperando | :en_curso | :terminada
-      timer_ref: nil
+      timer_ref: nil,
+      inicio_tiempo: nil
     ]
   end
 
@@ -75,7 +76,7 @@ defmodule PokemonBattle.Batalla do
   @impl true
   def handle_call(:iniciar, _from, state) do
     if map_size(state.jugadores) == 2 do
-      state = %{state | estado: :en_curso}
+      state = %{state | estado: :en_curso, inicio_tiempo: System.monotonic_time(:second)}
       state = iniciar_turno(state)
       {:reply, :ok, state}
     else
@@ -406,6 +407,7 @@ end
       ganador: ganador,
       perdedor: perdedor,
       turnos: turno_final,
+      duracion: (if state.inicio_tiempo, do: System.monotonic_time(:second) - state.inicio_tiempo, else: 0),
       nodo: to_string(nodo)
     })
 
