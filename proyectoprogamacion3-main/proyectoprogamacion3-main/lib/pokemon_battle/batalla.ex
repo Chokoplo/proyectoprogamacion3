@@ -10,6 +10,7 @@ defmodule PokemonBattle.Batalla do
     defstruct [
       :id_sala,
       :nodo,
+      timeout_turno: 20_000,
       jugadores: %{},       # %{pid => %{usuario, equipo, activo_idx, pids_cliente}}
       turno: 1,
       acciones: %{},        # %{pid => accion}
@@ -40,8 +41,12 @@ defmodule PokemonBattle.Batalla do
   # ---------- Callbacks ----------
 
   @impl true
-  def init(id_sala) do
-    {:ok, %Estado{id_sala: id_sala, nodo: node()}}
+  def init({id_sala, timeout_turno}) do
+    {:ok, %Estado{id_sala: id_sala, nodo: node(), timeout_turno: timeout_turno}}
+  end
+
+  def init(id_sala) when is_binary(id_sala) do
+    {:ok, %Estado{id_sala: id_sala, nodo: node(), timeout_turno: 20_000}}
   end
 
   @impl true
@@ -156,7 +161,7 @@ defmodule PokemonBattle.Batalla do
 
   defp iniciar_turno(state) do
     if state.timer_ref, do: Process.cancel_timer(state.timer_ref)
-    tiempo = @timeout_turno
+    tiempo = state.timeout_turno
     ref = Process.send_after(self(), :timeout_turno, tiempo)
 
     # Mostrar estado a cada jugador
@@ -381,6 +386,8 @@ end
   defp terminar_batalla(state, ganador, perdedor) do
     turno_final = state.turno
     nodo = state.nodo
+    jugadores_str = state.jugadores |> Map.values() |> Enum.map(& &1.usuario) |> Enum.join(" vs ")
+
     broadcast(state, """
 
     ═══════════════════════════════════
@@ -392,9 +399,15 @@ end
     ═══════════════════════════════════
     """)
 
-    Persistencia.registrar_batalla(
-      "ganador=#{ganador} perdedor=#{perdedor} turnos=#{turno_final} nodo=#{nodo}"
-    )
+    Persistencia.registrar_batalla(%{
+      fecha: DateTime.utc_now() |> DateTime.to_string(),
+      sala: state.id_sala,
+      jugadores: jugadores_str,
+      ganador: ganador,
+      perdedor: perdedor,
+      turnos: turno_final,
+      nodo: to_string(nodo)
+    })
 
     # Notificar al gestor de entrenadores para actualizar monedas y victorias
     PokemonBattle.GestorSalas.batalla_terminada(state.id_sala, ganador, perdedor)

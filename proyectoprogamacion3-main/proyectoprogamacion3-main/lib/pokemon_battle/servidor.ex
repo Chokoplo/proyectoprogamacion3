@@ -1,4 +1,4 @@
-defmodule PokemonBattle.Servidor do
+efmodule PokemonBattle.Servidor do
   alias PokemonBattle.{
     GestorEntrenadores, GestorSalas, SistemaSobres,
     SupervisorBatallas, Intercambio, Persistencia, Cluster
@@ -246,20 +246,39 @@ defmodule PokemonBattle.Servidor do
 
   defp procesar_autenticado("quitar_pokemon_equipo", [nombre_equipo, id_str], ctx) do
     {:ok, e} = GestorEntrenadores.get_entrenador(self())
-    with {id, ""} <- Integer.parse(id_str),
-         eq_idx when not is_nil(eq_idx) <- Enum.find_index(e.equipos, &(&1.nombre == nombre_equipo)),
-         equipo <- Enum.at(e.equipos, eq_idx),
-         true <- length(equipo.ids) > 1,
-         true <- id in equipo.ids do
-      nuevo_equipo = %{equipo | ids: Enum.reject(equipo.ids, &(&1 == id))}
-      equipos = List.replace_at(e.equipos, eq_idx, nuevo_equipo)
-      e_nuevo = %{e | equipos: equipos}
-      GestorEntrenadores.actualizar_entrenador(self(), e_nuevo)
-      IO.puts("Pokemon ##{id} quitado del equipo '#{nombre_equipo}'.")
-      %{ctx | sesion: e_nuevo}
+    # Validar que el equipo no esté cargado activamente en una sala de batalla
+    equipo_obj = Enum.find(e.equipos, &(&1.nombre == nombre_equipo))
+    ids_en_sala =
+      if not is_nil(ctx.sala_batalla) and not is_nil(equipo_obj) do
+        sala = GestorSalas.get_sala(ctx.sala_batalla)
+        if sala && sala.estado == :en_curso && Map.has_key?(sala.equipo_cargado, self()) do
+          Enum.map(sala.equipo_cargado[self()], & &1.id)
+        else
+          []
+        end
+      else
+        []
+      end
+    equipo_activo = not is_nil(equipo_obj) and equipo_obj.ids == ids_en_sala and ids_en_sala != []
+    if equipo_activo do
+      IO.puts("Error: No puedes modificar el equipo '#{nombre_equipo}' mientras está activo en una batalla.")
+      ctx
     else
-      false -> IO.puts("Error: No puedes quitar el unico Pokemon, o no esta en ese equipo."); ctx
-      _ -> IO.puts("Error: Equipo o Pokemon no encontrado."); ctx
+      with {id, ""} <- Integer.parse(id_str),
+           eq_idx when not is_nil(eq_idx) <- Enum.find_index(e.equipos, &(&1.nombre == nombre_equipo)),
+           equipo <- Enum.at(e.equipos, eq_idx),
+           true <- length(equipo.ids) > 1,
+           true <- id in equipo.ids do
+        nuevo_equipo = %{equipo | ids: Enum.reject(equipo.ids, &(&1 == id))}
+        equipos = List.replace_at(e.equipos, eq_idx, nuevo_equipo)
+        e_nuevo = %{e | equipos: equipos}
+        GestorEntrenadores.actualizar_entrenador(self(), e_nuevo)
+        IO.puts("Pokemon ##{id} quitado del equipo '#{nombre_equipo}'.")
+        %{ctx | sesion: e_nuevo}
+      else
+        false -> IO.puts("Error: No puedes quitar el unico Pokemon, o no esta en ese equipo."); ctx
+        _ -> IO.puts("Error: Equipo o Pokemon no encontrado."); ctx
+      end
     end
   end
 
@@ -277,21 +296,40 @@ defmodule PokemonBattle.Servidor do
         pks = Enum.map(equipo_guardado.ids, fn id ->
           Enum.find(e.inventario, &(&1.id == id))
         end)
-        if Enum.any?(pks, &is_nil/1) do
-          IO.puts("Error: Faltan Pokemon en el inventario.")
-          ctx
-        else
-          equipo_batalla = Enum.map(pks, fn pk ->
-            %{
-              id: pk.id, especie: pk.especie, tipos: pk.tipos,
-              dueno_original: pk.dueno_original, rareza: pk.rareza,
-              ataque: pk.ataque, defensa: pk.defensa, velocidad: pk.velocidad,
-              movimientos: pk.movimientos, salud: 100
-            }
-          end)
-          GestorSalas.usar_equipo(ctx.sala_batalla, self(), equipo_batalla)
-          IO.puts("Equipo '#{nombre}' cargado con #{length(pks)} Pokemon.")
-          ctx
+        # Verificar que ningún Pokémon esté ofrecido en una sala de intercambio activa
+        ids_en_intercambio =
+          if not is_nil(ctx.sala_intercambio) do
+            case Intercambio.estado(ctx.sala_intercambio) do
+              %{participantes: parts} ->
+                yo = Enum.find(parts, &(&1.pid == self()))
+                if yo && yo.oferta_id, do: [yo.oferta_id], else: []
+              _ -> []
+            end
+          else
+            []
+          end
+        pk_en_intercambio = Enum.find(pks, fn pk ->
+          not is_nil(pk) and pk.id in ids_en_intercambio
+        end)
+        cond do
+          Enum.any?(pks, &is_nil/1) ->
+            IO.puts("Error: Faltan Pokemon en el inventario (verifica con 'inventario').")
+            ctx
+          not is_nil(pk_en_intercambio) ->
+            IO.puts("Error: #{String.capitalize(pk_en_intercambio.especie)} [##{pk_en_intercambio.id}] está ofrecido en un intercambio activo.")
+            ctx
+          true ->
+            equipo_batalla = Enum.map(pks, fn pk ->
+              %{
+                id: pk.id, especie: pk.especie, tipos: pk.tipos,
+                dueno_original: pk.dueno_original, rareza: pk.rareza,
+                ataque: pk.ataque, defensa: pk.defensa, velocidad: pk.velocidad,
+                movimientos: pk.movimientos, salud: 100
+              }
+            end)
+            GestorSalas.usar_equipo(ctx.sala_batalla, self(), equipo_batalla)
+            IO.puts("Equipo '#{nombre}' cargado con #{length(pks)} Pokemon.")
+            ctx
         end
       end
     end
@@ -312,14 +350,24 @@ defmodule PokemonBattle.Servidor do
   end
 
   defp procesar_autenticado("crear_sala", args, ctx) do
-    tiempo = case args do
-      ["tiempo_turno=" <> t] -> String.to_integer(t)
-      _ -> 20
+    if not is_nil(ctx.sala_batalla) do
+      IO.puts("Error: Ya estás en una sala de batalla. Sal primero.")
+      ctx
+    else
+      # Acepta: crear_sala, crear_sala tiempo_turno=30, crear_sala tiempo_turno 30
+      arg_str = Enum.join(args, " ")
+      tiempo =
+        cond do
+          Regex.match?(~r/tiempo_turno\s*=\s*(\d+)/, arg_str) ->
+            [_, t] = Regex.run(~r/tiempo_turno\s*=\s*(\d+)/, arg_str)
+            String.to_integer(t)
+          true -> 20
+        end
+      {:ok, id_sala} = GestorSalas.crear_sala(tiempo)
+      GestorSalas.unirse_sala(id_sala, self(), ctx.sesion.usuario)
+      IO.puts("Sala #{id_sala} creada. Tiempo de turno: #{tiempo}s.")
+      %{ctx | sala_batalla: id_sala}
     end
-    {:ok, id_sala} = GestorSalas.crear_sala(tiempo)
-    GestorSalas.unirse_sala(id_sala, self(), ctx.sesion.usuario)
-    IO.puts("Sala #{id_sala} creada. Tiempo de turno: #{tiempo}s.")
-    %{ctx | sala_batalla: id_sala}
   end
 
   defp procesar_autenticado("unirse_sala", [id_sala], ctx) do
@@ -379,25 +427,47 @@ defmodule PokemonBattle.Servidor do
   end
 
   defp procesar_autenticado("crear_sala_intercambio", _, ctx) do
-    codigo = :rand.uniform(999)
-    {:ok, _} = SupervisorBatallas.iniciar_intercambio(codigo)
-    {:ok, e} = GestorEntrenadores.get_entrenador(self())
-    Intercambio.unirse(codigo, self(), e.usuario, e.inventario)
-    IO.puts("[Sala IC-#{codigo} creada] Comparte este codigo con el otro entrenador.")
-    %{ctx | sala_intercambio: codigo}
+    cond do
+      not is_nil(ctx.sala_intercambio) ->
+        IO.puts("Error: Ya tienes una sala de intercambio activa. Cancela primero con cancelar_intercambio.")
+        ctx
+      not is_nil(ctx.sala_batalla) ->
+        IO.puts("Error: No puedes crear una sala de intercambio mientras estás en una batalla activa.")
+        ctx
+      true ->
+        codigo = :rand.uniform(999)
+        {:ok, _} = SupervisorBatallas.iniciar_intercambio(codigo)
+        {:ok, e} = GestorEntrenadores.get_entrenador(self())
+        Intercambio.unirse(codigo, self(), e.usuario, e.inventario)
+        IO.puts("[Sala IC-#{codigo} creada] Comparte este codigo con el otro entrenador.")
+        %{ctx | sala_intercambio: codigo}
+    end
   end
 
   defp procesar_autenticado("unirse_sala_intercambio", [codigo_str], ctx) do
-    case Integer.parse(codigo_str) do
-      {codigo, ""} ->
-        {:ok, e} = GestorEntrenadores.get_entrenador(self())
-        case Intercambio.unirse(codigo, self(), e.usuario, e.inventario) do
-          :ok -> %{ctx | sala_intercambio: codigo}
-          {:error, msg} -> IO.puts("Error: #{msg}"); ctx
-        end
-      _ ->
-        IO.puts("Codigo invalido.")
+    cond do
+      not is_nil(ctx.sala_intercambio) ->
+        IO.puts("Error: Ya estás en una sala de intercambio activa.")
         ctx
+      not is_nil(ctx.sala_batalla) ->
+        IO.puts("Error: No puedes unirte a un intercambio mientras estás en una batalla activa.")
+        ctx
+      true ->
+        # Aceptar tanto "IC-123" como "123"
+        codigo_limpio = String.replace(codigo_str, ~r/^IC-/i, "")
+        case Integer.parse(codigo_limpio) do
+          {codigo, ""} ->
+            {:ok, e} = GestorEntrenadores.get_entrenador(self())
+            case Intercambio.unirse(codigo, self(), e.usuario, e.inventario) do
+              :ok ->
+                IO.puts("[Sala IC-#{codigo}] Te uniste correctamente.")
+                %{ctx | sala_intercambio: codigo}
+              {:error, msg} -> IO.puts("Error: #{msg}"); ctx
+            end
+          _ ->
+            IO.puts("Codigo invalido. Usa el formato: IC-123 o simplemente 123.")
+            ctx
+        end
     end
   end
 
@@ -451,3 +521,4 @@ defmodule PokemonBattle.Servidor do
     ctx
   end
 end
+ 

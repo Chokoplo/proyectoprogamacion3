@@ -12,8 +12,8 @@ defmodule PokemonBattle.SupervisorBatallas do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  def iniciar_batalla(id_sala) do
-    spec = {PokemonBattle.Batalla, id_sala}
+  def iniciar_batalla(id_sala, timeout_turno \\ 20_000) do
+    spec = {PokemonBattle.Batalla, {id_sala, timeout_turno}}
     DynamicSupervisor.start_child(PokemonBattle.DynSupervisor, spec)
   end
 
@@ -22,3 +22,4 @@ defmodule PokemonBattle.SupervisorBatallas do
     DynamicSupervisor.start_child(PokemonBattle.DynSupervisor, spec)
   end
 end
+ 
