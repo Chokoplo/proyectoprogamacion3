@@ -1,3 +1,4 @@
+
 defmodule PokemonBattle.SistemaSobres do
   @moduledoc "Gestión de compra y apertura de sobres."
 
@@ -48,7 +49,8 @@ defmodule PokemonBattle.SistemaSobres do
       {:error, "No se encontró el sobre. Usa 'inventario' para ver tus sobres."}
     else
       tienda = Persistencia.cargar_tienda()
-      tipo_info = Enum.find(tienda, &(&1["tipo"] == sobre.tipo))
+      tipo_sobre_str = to_string(sobre.tipo)
+      tipo_info = Enum.find(tienda, &(&1["tipo"] == tipo_sobre_str))
       probabilidades = tipo_info["probabilidades"]
 
       catalogo = Persistencia.cargar_pokemon_catalogo()
