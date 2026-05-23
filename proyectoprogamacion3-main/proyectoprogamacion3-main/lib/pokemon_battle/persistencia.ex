@@ -48,7 +48,15 @@ end
   end
 
   # --- Battles log ---
-  def registrar_batalla(info) do
+  def registrar_batalla(info) when is_map(info) do
+    linea =
+      "#{info.fecha} | sala=#{info.sala} | jugadores=#{info.jugadores} | " <>
+      "ganador=#{info.ganador} | perdedor=#{info.perdedor} | " <>
+      "turnos=#{info.turnos} | nodo=#{info.nodo}\n"
+    File.write!(@battles_log, linea, [:append])
+  end
+
+  def registrar_batalla(info) when is_binary(info) do
     linea = "#{DateTime.utc_now()} | #{info}\n"
     File.write!(@battles_log, linea, [:append])
   end
