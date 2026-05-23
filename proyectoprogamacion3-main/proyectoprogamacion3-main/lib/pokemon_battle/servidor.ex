@@ -1,4 +1,4 @@
-efmodule PokemonBattle.Servidor do
+defmodule PokemonBattle.Servidor do
   alias PokemonBattle.{
     GestorEntrenadores, GestorSalas, SistemaSobres,
     SupervisorBatallas, Intercambio, Persistencia, Cluster
@@ -521,4 +521,3 @@ efmodule PokemonBattle.Servidor do
     ctx
   end
 end
- 
